@@ -1,0 +1,11 @@
+npx prisma init(1)
+npm install @prisma/client prisma(To install a client side prisma)(2)
+npx prisma generate(To generate a prisma)(3)
+npx prisma db pull(Automatic fetch the tables from db)(4)
+npx prisma migrate dev(To create migraation)(5)[Every time when you add new column or tabe or alter anything you had to perform this]
+
+nano prisma/schema.prisma(Togenerate schema of prisma)
+
+source use 1)https://www.section.io/engineering-education/api-with-prisma-and-nodejs/
+source use2)https://www.digitalocean.com/community/tutorials/how-to-build-a-rest-api-with-prisma-and-postgresql
+

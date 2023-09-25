@@ -1,9 +1,0 @@
-npx prisma migrate dev(To create migraation)
-npx prisma generate(To generate a prisma)
-npm install @prisma/client prisma(To install a client side prisma)
-npx prisma db pull(Automatic fetch the tables from db)
-nano prisma/schema.prisma(Togenerate schema of prisma)
-
-source use 1)https://www.section.io/engineering-education/api-with-prisma-and-nodejs/
-source use2)https://www.digitalocean.com/community/tutorials/how-to-build-a-rest-api-with-prisma-and-postgresql
-
