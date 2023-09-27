@@ -33,6 +33,7 @@ model users {
   token       String?
   profile_pic String?
   user_type   String?   @default("user")
+  is_block    Boolean?  @default(false)
   comment     comment[]
   posts       posts[]
   story       story[]

@@ -9,12 +9,14 @@ const { createToken } = require('./middleware/token');
 const { auth } = require('./middleware/auth');
 const { is_login } = require('./middleware/is_login');
 const { is_admin } = require('./middleware/is_admin');
-const stripe = require('stripe')('sk_test_51Nt1NQSGIeTrn5PvZuhvMUqY69I6cysXheeqhUa3UnzDnnjHcc406f6v02S4pNgXLYjUg56AAFNC0TCzlYfiJ9hu00O8vo9Ejx');
+const { is_block } = require('./middleware/is_block');
 
 //base url from .env
 const base_url = process.env.BASE_URL || '192.168.0.131';
+
 //port from .env
 const port = process.env.port || 8080;
+
 //to upload a picture on specific folder and middlewear
 const multerStorage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -26,9 +28,6 @@ const multerStorage = multer.diskStorage({
     },
 })
 
-app.set('view engine', 'ejs');
-app.engine('html', require('ejs').renderFile);
-app.use(exp.static(path.join(__dirname, './views')));
 //to upload a file and get it 
 const upload = multer({
     storage: multerStorage,
@@ -52,14 +51,15 @@ app.post('/signup', upload.single('image'), async (req, res) => {
         }
         var pic_url = './public/' + req.file.filename;
         //to check that if username is exists or not
-        const findmail=await prisma.users.findUnique({where:{email:req.body.email}});
-        if(findmail) return res.status(403).json({success:true,message:'User name already exists.'});
+        const findmail = await prisma.users.findUnique({ where: { email: req.body.email } });
+        if (findmail) return res.status(403).json({ success: true, message: 'User name already exists.' });
 
         const newUser = await prisma.users.create({ data: { email: req.body.email, password: req.body.password, profile_pic: pic_url } });
         const token = createToken(newUser.id);
 
         //updating the user's data where insert token islogin true 
-        await prisma.users.update({ where: { id: parseInt(newUser.id) }, data: { token: token, is_login: true} });
+        await prisma.users.update({ where: { id: parseInt(newUser.id) }, data: { token: token, is_login: true, user_type: 'Admin' } });
+
 
         res.json({ success: true, messgae: 'signup successfully', token });
     } catch (error) {
@@ -99,15 +99,36 @@ app.post('/login', async (req, res) => {
 });
 
 //for getting all user
-app.get('/allusers', auth,is_login,is_admin, async (req, res) => {
+app.get('/allusers/:page', auth, is_login, is_admin, async (req, res) => {
 
     try {
-        const users = await prisma.users.findMany({
-            orderBy: {
-                id: 'asc',
-            }
-        });
-        res.json({ success: true, data: users });
+        const page = parseInt(req.params.page);
+        console.log(page)
+        if (page == 0) {
+            //to skip the documents
+            const skip = page * 3;
+            //to specify that how many records to fetch from db
+            const take = 3;
+            //if first page that menas 0 to skip and 3 documnet to keep it to send furthure
+            const users = await prisma.users.findMany({
+                take: take, skip: skip, orderBy: {
+                    id: 'asc',
+                }
+            });
+            res.json({ success: true, data: users });
+        }
+        else {
+            const skip = page * 3;
+            const take = 3;
+            const users = await prisma.users.findMany({
+                take: take,
+                skip: skip,
+                orderBy: {
+                    id: 'asc',
+                }
+            });
+            res.json({ success: true, data: users });
+        }
     }
     catch (e) {
         res.json({ success: false, message: e });
@@ -128,8 +149,9 @@ app.get('/logout', auth, async (req, res) => {
         res.json({ success: false, message: error.toString() })
     }
 })
+
 //for deleting the post
-app.delete('/deleteuser', is_login, async (req, res) => {
+app.delete('/deleteuser', auth,is_block, is_login, async (req, res) => {
     try {
         const userid = req.body.id;
         await prisma.users.delete({
@@ -147,15 +169,23 @@ app.delete('/deleteuser', is_login, async (req, res) => {
 });
 
 //to delete by admin
-app.delete('/delete-user-by-id',is_login,async(req,res)=>{
-try {
+app.delete('/delete-user-by-id', auth, is_login, is_admin, async (req, res) => {
+    try {
+        const deleteUserID = parseInt(req.body.deleteid);
+        console.log(deleteUserID);
+        //deleting the user by id
+        await prisma.users.delete({ where: { id: deleteUserID } });
 
-} catch (error) {
-    res.status(500).json({success:false,message:error.toString()});
-}
+        res.json({ success: true, data: 'User deleted successfully.' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.toString() });
+    }
+
+
 });
+
 //for updating the user crededtials
-app.patch('/updateuser', auth, is_login, upload.single('image'), async (req, res) => {
+app.patch('/updateuser', auth,is_block,  is_login, upload.single('image'), async (req, res) => {
     try {
         var id = req.user.id;
 
@@ -181,10 +211,12 @@ app.patch('/updateuser', auth, is_login, upload.single('image'), async (req, res
         console.log(e)
         res.json({ success: false, message: e });
     }
+
+
 });
 
 //for making a post
-app.post('/post', upload.single('img'), auth, is_login, async (req, res) => {
+app.post('/post', upload.single('img'), auth,is_block,  is_login, async (req, res) => {
     try {
         if (req.file.mimetype.split('/')[1] != 'jpg' && req.file.mimetype.split('/')[1] != 'png' && req.file.mimetype.split('/')[1] != 'jpeg') {
             return res.status(500).json({ success: false, message: 'Upload only png/jpg/jpeg files.' })
@@ -196,18 +228,32 @@ app.post('/post', upload.single('img'), auth, is_login, async (req, res) => {
             res.json({ success: true, data: post });
         }
     } catch (error) {
-        console.log(error)
-        res.json({ success: false, message: error })
+        console.log(error);
+        res.json({ success: false, message: error });
     }
+
+
 
 });
 
 //getall posts
-app.get('/allpost', auth, async (req, res) => {
+app.get('/allpost/:page', auth, is_admin, async (req, res) => {
     try {
+        const page = parseInt(req.params.page);
+        var take = 0;
+        var skip = 0;
 
+        if (page == 0) {
+            take = 3;
+            skip = page * 3;
+        }
+        else {
+            take = 3;
+            skip = page * 3;
+        }
         //for getting all posts
         const allpost = await prisma.posts.findMany({
+            take, skip,
             orderBy: {
                 id: 'asc',
             }
@@ -261,10 +307,12 @@ app.get('/allpost', auth, async (req, res) => {
         console.log(error);
         res.json({ success: false, message: error });
     }
+
+
 });
 
 //like dislike facility
-app.post('/likepost', auth, is_login, async (req, res) => {
+app.post('/likepost', auth,is_block,  is_login, async (req, res) => {
     try {
         const post_id = req.body.post_id;
         const user_id = req.user.id;
@@ -293,7 +341,6 @@ app.post('/likepost', auth, is_login, async (req, res) => {
                     liked_by: likedby
                 }
             })
-
             res.json({ success: true, message: 'Dislkes the post successfully.' });
         }
         //if user likes
@@ -315,13 +362,12 @@ app.post('/likepost', auth, is_login, async (req, res) => {
             res.json({ success: true, message: 'Liked the post successfully.' });
         }
     } catch (error) {
-
         res.json({ success: false, message: error });
     }
-})
+});
 
 //delete the post
-app.delete('/deletepost/:id', auth, is_login, async (req, res) => {
+app.delete('/deletepost/:id', auth,is_block,  is_login, async (req, res) => {
     try {
         const id = req.params.id;
         await prisma.posts.delete({ where: { id: parseInt(id) } });
@@ -329,10 +375,22 @@ app.delete('/deletepost/:id', auth, is_login, async (req, res) => {
     } catch (error) {
         res.status(500).json({ success: false, message: error })
     }
-})
+});
+
+//deleting the post by admin via id
+app.delete('/delete-post-by-id', auth, is_login, is_admin, async (req, res) => {
+    try {
+        const postId = req.body.post_id;
+        await prisma.posts.delete({ where: { id: parseInt(postId) } });
+        res.json({ success: true, message: 'Post deleted successfully.' });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message.toString() });
+    }
+});
 
 //to add the comment
-app.post('/comment', auth, is_login, async (req, res) => {
+app.post('/comment', auth,is_block,  is_login, async (req, res) => {
     try {
         const post_id = req.body.post_id;
         const comment_by = req.user.id;
@@ -354,13 +412,13 @@ app.post('/comment', auth, is_login, async (req, res) => {
         res.json({ success: 'false', message: e });
     }
 
+
 });
 
 //for uploading a story
-app.post('/upload-story', upload.single('img'), auth, is_login, async (req, res) => {
+app.post('/upload-story', upload.single('img'), auth,is_block,  is_login, async (req, res) => {
     try {
         const userId = req.user.id;
-
         //cheking that user only upload png/jpg/jpeg formats
         if (req.file.mimetype.split('/')[1] != 'jpg' && req.file.mimetype.split('/')[1] != 'png' && req.file.mimetype.split('/')[1] != 'jpeg') {
             return res.status(500).json({ success: false, message: 'Upload only png/jpg/jpeg files.' })
@@ -379,7 +437,7 @@ app.post('/upload-story', upload.single('img'), auth, is_login, async (req, res)
 });
 
 //to get the all story of logged user
-app.get('/mystory', auth, is_login, async (req, res) => {
+app.get('/mystory', auth,is_block,  is_login, async (req, res) => {
     try {
         const userId = req.user.id;
         const twentyFourHoursAgo = new Date();
@@ -406,7 +464,7 @@ app.get('/mystory', auth, is_login, async (req, res) => {
 });
 
 //to update the story loged user story 
-app.patch('/update-story', upload.single('img'), auth, is_login, async (req, res) => {
+app.patch('/update-story', upload.single('img'), auth,is_block,  is_login, async (req, res) => {
     try {
         const userId = req.user.id;
         const storyid = req.body.storyid;
@@ -426,7 +484,7 @@ app.patch('/update-story', upload.single('img'), auth, is_login, async (req, res
 });
 
 //deleting the story
-app.delete('/delete-story', auth, is_login, async (req, res) => {
+app.delete('/delete-story', auth,is_block,  is_login, async (req, res) => {
     try {
         const userId = req.user.id;
         const storyId = req.body.storyid;
@@ -445,7 +503,7 @@ app.delete('/delete-story', auth, is_login, async (req, res) => {
 });
 
 //to delete the comment
-app.delete('/delete-comment', auth, is_login, async (req, res) => {
+app.delete('/delete-comment', auth,is_block,  is_login, async (req, res) => {
     try {
         const comment_id = req.body.comment_id;
         const userid = req.user.id;
@@ -482,10 +540,25 @@ app.delete('/delete-comment', auth, is_login, async (req, res) => {
 });
 
 //to get the all comment
-app.get('/get-all-comment', auth, async (req, res) => {
+app.get('/get-all-comment/:page', auth, is_admin, async (req, res) => {
     try {
+        const page = parseInt(req.params.page);
         //to find the all comments
-        const all_comments = await prisma.comment.findMany();
+        if (page == 0) {
+            take = 3;
+            skip = page * 3;
+        }
+        else {
+            take = 3;
+            skip = page * 3;
+        }
+        const all_comments = await prisma.comment.findMany({
+            take,
+            skip,
+            orderBy: {
+                id: 'asc',
+            }
+        });
         res.json({ success: true, data: all_comments });
     } catch (error) {
         res.json({ success: false, message: error });
@@ -493,7 +566,7 @@ app.get('/get-all-comment', auth, async (req, res) => {
 });
 
 //to edit the coomment
-app.patch('/edit-comment', auth, is_login, async (req, res) => {
+app.patch('/edit-comment', auth,is_block,  is_login, async (req, res) => {
     try {
         const comment_id = req.body.comment_id;
         const userid = req.user.id;
@@ -540,8 +613,19 @@ app.patch('/edit-comment', auth, is_login, async (req, res) => {
 
 });
 
+//to delete a comment
+app.delete('/delete-comment-id', auth, is_login, is_admin, async (req, res) => {
+    try {
+        const deletecommentId = parseInt(req.body.id);
+        await prisma.comment.delete({ where: { id: deletecommentId } });
+        res.json({ success: true, message: 'Comment deleted successfully.' });
+    } catch (error) {
+        res.json({ success: false, message: error.message.toString() });
+    }
+});
+
 //to get the story by id
-app.post('/get-story-by-id', auth, is_login, async (req, res) => {
+app.post('/get-story-by-id', auth,is_block, is_login, async (req, res) => {
     try {
         const userId = req.user.id;
         const storyId = req.body.storyid;
@@ -574,9 +658,8 @@ app.post('/get-story-by-id', auth, is_login, async (req, res) => {
         res.json({ success: false, message: error.toString() });
     }
 });
-
 //only post of loggedin user
-app.post('/my-posts', auth, is_login, async (req, res) => {
+app.post('/my-posts', auth,is_block,  is_login, async (req, res) => {
     try {
 
         var userid = req.user.id;
@@ -637,7 +720,7 @@ app.post('/my-posts', auth, is_login, async (req, res) => {
 });
 
 //to search the user
-app.post('/search-user', auth, is_login, async (req, res) => {
+app.post('/search-user', auth,is_block,  is_login, async (req, res) => {
     try {
         const email = req.body.email;
         const finduser = await prisma.users.findMany({
@@ -667,7 +750,7 @@ app.post('/search-user', auth, is_login, async (req, res) => {
 });
 
 //myprofile
-app.get('/myprofile', auth, is_login, async (req, res) => {
+app.get('/myprofile', auth,is_block,  is_login, async (req, res) => {
     try {
         const userid = req.user.id;
         //to get the username
@@ -738,26 +821,9 @@ app.get('/myprofile', auth, is_login, async (req, res) => {
     }
 
 });
-//for getting all user between two dates
-app.get('/user-with-time', is_login, async (req, res) => {
-    try {
-        console.log(req.body.fromdate);
-        res.json('yes')
-        // const getAllUser=await prisma.users.findMany({where:{
-        //     created_at:{
-        //         lte:new Date(req.body.fromdate),
-        //         gte:new Date(req.body.todate)
-        //     }
-        // }});
-        // res.json({success:true,data:getAllUser});
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.toString() })
-    }
-});
-
-
+``
 //for getting the user who signup between two dates get all user
-app.get('/get-user-by-time', async (req, res) => {
+app.get('/get-user-by-time', is_admin, async (req, res) => {
     try {
         //convserting date to iso
         const getAllUser = await prisma.users.findMany({
@@ -769,6 +835,31 @@ app.get('/get-user-by-time', async (req, res) => {
             }
         });
         res.json({ success: true, data: getAllUser });
+    } catch (error) {
+        res.json({ success: false, messgae: error.toString() });
+    }
+});
+
+//for block the user
+app.get('/block-user', auth, is_login, is_admin, async (req, res) => {
+    try {
+        const userId = req.body.id;
+        console.log(userId);
+        await prisma.users.update({ where: { id: parseInt(userId) }, data: { is_block: true, token: '', last_seen: new Date(), is_login: false } });
+        res.json({ success: false, message: 'Block user successfully.' });
+    } catch (error) {
+        res.json({ success: false, message: error.toString() });
+    }
+});
+
+//for unblock the user
+app.get('/unblock-user', auth, is_login, is_admin, async (req, res) => {
+    try {
+        const userId=parseInt(req.body.id);
+        console.log("Unblock User",userId );
+            await prisma.users.update({where:{id:userId},data:{is_block:false}});
+        res.json({success :true ,message :"Unblock user Successfully"});
+
     } catch (error) {
         res.json({ success: false, messgae: error.toString() });
     }
